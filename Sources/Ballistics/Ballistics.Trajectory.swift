@@ -56,7 +56,7 @@ extension Ballistics.Trajectory where Scalar: Exponential.`Protocol` {
         guard abs(z) < 1 / 8 else { return (z + Scalar.expm1(-z)) / (z * z) }
         var term: Scalar = 1 / 2
         var sum: Scalar = term
-        for power in 3...14 {
+        (3...14).forEach { power in
             term *= -z / Scalar(power)
             sum += term
         }
