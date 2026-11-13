@@ -1,4 +1,4 @@
-description: "A body thrown through air with drag for Swift, in closed form: where it is at any instant, when it turns, and when it reaches a depth."
+description: "A thrown body under constant acceleration and linear drag for Swift, in closed form: where it is at any instant, when it turns, and when it comes down to a position."
 topics:
   - primitives
   - ballistics

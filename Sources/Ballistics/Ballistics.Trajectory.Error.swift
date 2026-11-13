@@ -4,10 +4,10 @@ extension Ballistics.Trajectory {
         /// The velocity is not finite.
         case velocity
 
-        /// The drag is not positive and finite.
-        case drag
+        /// The acceleration is not finite.
+        case acceleration
 
-        /// The terminal velocity is not finite.
-        case terminal
+        /// The drag is negative or not finite.
+        case drag
     }
 }

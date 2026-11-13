@@ -1,28 +1,28 @@
 extension Ballistics {
-    /// The motion along one axis of a body thrown with a velocity, pulled at a constant rate and slowed by
-    /// drag in proportion to its speed: v′ = drag × (terminal − v). Its velocity tends to `terminal`, the
-    /// speed at which pull and drag balance, and its position is a formula in the time.
+    /// The motion along one axis of a body thrown with a velocity, under a constant acceleration and a drag
+    /// in proportion to its velocity: v′ = acceleration − drag × v. With drag its velocity tends to
+    /// acceleration / drag, the terminal velocity; without, it is the motion under constant acceleration.
     ///
     /// Under this drag the axes do not interact, so a flight in the plane or in space is one trajectory per
-    /// axis with the same drag: the axis of the pull with its terminal velocity, the others with zero.
+    /// axis with the same drag: the axis of the pull with its acceleration, the others with zero.
     public struct Trajectory<Scalar: BinaryFloatingPoint> {
         /// The velocity it is thrown with, in units of length per unit of time.
         public let velocity: Scalar
 
-        /// The share of the difference from the terminal velocity it loses per unit of time.
+        /// The constant acceleration, such as gravity along the vertical; zero along an axis without pull.
+        public let acceleration: Scalar
+
+        /// The share of its velocity that drag takes away per unit of time; zero in a vacuum.
         public let drag: Scalar
 
-        /// The velocity it tends to, the pull divided by the drag; zero along an axis without pull.
-        public let terminal: Scalar
-
-        /// A trajectory from a velocity, a positive drag and a terminal velocity, all finite.
-        public init(velocity: Scalar, drag: Scalar, terminal: Scalar) throws(Error) {
+        /// A trajectory from a finite velocity, a finite acceleration and a finite drag of zero or more.
+        public init(velocity: Scalar, acceleration: Scalar, drag: Scalar) throws(Error) {
             guard velocity.isFinite else { throw .velocity }
-            guard drag.isFinite, drag > 0 else { throw .drag }
-            guard terminal.isFinite else { throw .terminal }
+            guard acceleration.isFinite else { throw .acceleration }
+            guard drag.isFinite, drag >= 0 else { throw .drag }
             self.velocity = velocity
+            self.acceleration = acceleration
             self.drag = drag
-            self.terminal = terminal
         }
     }
 }
@@ -32,35 +32,63 @@ extension Ballistics.Trajectory: Hashable {}
 extension Ballistics.Trajectory: Sendable where Scalar: Sendable {}
 
 extension Ballistics.Trajectory where Scalar: Exponential.`Protocol` {
-    /// How far it has moved from where it was thrown after a time:
-    /// terminal × t + (velocity − terminal) / drag × (1 − e^(−drag × t)).
+    /// How far it has moved from where it was thrown after a time t: v × t × φ₁(k × t) + a × t² × φ₂(k × t),
+    /// with φ₁(z) = (1 − e^(−z)) / z and φ₂(z) = (z − 1 + e^(−z)) / z², which are 1 and 1/2 at z = 0. Without
+    /// drag it is v × t + a × t² / 2.
     public func position(at time: Scalar) -> Scalar {
-        terminal * time + (velocity - terminal) / drag * (1 - Scalar.exp(-drag * time))
+        let z = drag * time
+        return velocity * time * Self.first(z) + acceleration * time * time * Self.second(z)
     }
 
-    /// Its velocity after a time: terminal + (velocity − terminal) × e^(−drag × t).
+    /// Its velocity after a time t: v × e^(−k × t) + a × t × φ₁(k × t); without drag, v + a × t.
     public func velocity(at time: Scalar) -> Scalar {
-        terminal + (velocity - terminal) * Scalar.exp(-drag * time)
+        let z = drag * time
+        return velocity * Scalar.exp(-z) + acceleration * time * Self.first(z)
     }
 
-    /// The time at which it stops moving against the pull and turns, the top of a throw upward; zero when
-    /// it is not thrown against the pull.
-    public var apex: Scalar {
-        velocity * terminal < 0 ? Scalar.log((terminal - velocity) / terminal) / drag : 0
+    /// (1 − e^(−z)) / z, and 1 at zero.
+    private static func first(_ z: Scalar) -> Scalar {
+        z == 0 ? 1 : -Scalar.expm1(-z) / z
     }
 
-    /// The time after its apex at which it has moved `depth` from where it was thrown, in the direction of
-    /// the pull, found by sixty halvings; past the apex it moves ever further, so there is one such time.
-    /// The apex itself, to within the halving, for a depth it has passed by then; nil without pull.
-    public func landing(at depth: Scalar) -> Scalar? {
-        guard terminal != 0 else { return nil }
-        let sign: Scalar = terminal < 0 ? -1 : 1
-        var early = apex
-        var late = early + Swift.max(sign * depth - sign * position(at: early), 0) / (sign * terminal) + 10 / drag
-        for _ in 0..<60 {
-            let middle = (early + late) / 2
-            if sign * position(at: middle) < sign * depth { early = middle } else { late = middle }
+    /// (z − 1 + e^(−z)) / z², by its Taylor series near zero, where the direct form cancels.
+    private static func second(_ z: Scalar) -> Scalar {
+        guard abs(z) < 1 / 8 else { return (z + Scalar.expm1(-z)) / (z * z) }
+        var term: Scalar = 1 / 2
+        var sum: Scalar = term
+        for power in 3...14 {
+            term *= -z / Scalar(power)
+            sum += term
         }
-        return late
+        return sum
+    }
+
+    /// The time at which it stops moving against the acceleration and turns, the top of a throw upward:
+    /// log(1 − k × v / a) / k, or −v / a without drag. Zero when it is not thrown against the acceleration.
+    public var apex: Scalar {
+        guard velocity * acceleration < 0 else { return 0 }
+        guard drag > 0 else { return -velocity / acceleration }
+        return Scalar.log1p(-drag * velocity / acceleration) / drag
+    }
+
+    /// The time after its apex at which it is at a position, the one time it gets there moving with the
+    /// acceleration; nil for a position it never reaches after its apex, and without acceleration.
+    ///
+    /// Without drag it is the apex plus √(2 × (position − position at apex) / a). With drag it is found by
+    /// halving a bracket that is sure to hold it until the halves meet in the scalar.
+    public func landing(at position: Scalar) -> Scalar? {
+        guard acceleration != 0 else { return nil }
+        let early = apex
+        let remaining = (position - self.position(at: early)) / acceleration
+        guard remaining >= 0 else { return nil }
+        guard remaining > 0 else { return early }
+        guard drag > 0 else { return early + (2 * remaining).squareRoot() }
+        let sign: Scalar = acceleration < 0 ? -1 : 1
+        var (low, high) = (early, early + remaining * drag + 1 / drag)
+        while true {
+            let middle = low + (high - low) / 2
+            guard middle > low, middle < high else { return high }
+            if sign * self.position(at: middle) < sign * position { low = middle } else { high = middle }
+        }
     }
 }
