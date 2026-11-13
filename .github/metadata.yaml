@@ -1,0 +1,9 @@
+description: "A body thrown through air with drag for Swift, in closed form: where it is at any instant, when it turns, and when it reaches a depth."
+topics:
+  - primitives
+  - ballistics
+  - animation
+  - physics
+homepage: "https://swift-institute.org"
+readme:
+  family: E
